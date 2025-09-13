@@ -1,0 +1,13 @@
+[build]
+  functions = "netlify/functions"
+
+[functions]
+  external_node_modules = ["node-fetch"]
+  node_bundler = "esbuild"
+
+# 環境変数の例（実際の値はNetlifyダッシュボードで設定）
+[context.production.environment]
+  NODE_VERSION = "18"
+
+[context.deploy-preview.environment]
+  NODE_VERSION = "18"
