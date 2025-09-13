@@ -1,0 +1,31 @@
+{
+  "name": "wix-gemini-proxy",
+  "version": "1.0.0",
+  "description": "Netlify Functions proxy for Gemini API integration with Wix",
+  "main": "index.js",
+  "scripts": {
+    "dev": "netlify dev",
+    "build": "echo 'No build step required'",
+    "test": "echo 'No tests specified'"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/wix-gemini-proxy.git"
+  },
+  "keywords": [
+    "netlify",
+    "functions",
+    "gemini",
+    "ai",
+    "wix",
+    "proxy"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
