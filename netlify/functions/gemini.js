@@ -1,17 +1,18 @@
-const fetch = require('node-fetch');
+// netlify/functions/gemini.js
+// Wix対応の統一されたGemini API Function
 
 exports.handler = async (event, context) => {
   console.log('Gemini API function called');
   
-  // CORSヘッダーの設定
+  // CORS設定（Wix対応）
   const headers = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Content-Type': 'application/json'
   };
 
-  // プリフライトリクエスト（OPTIONS）の処理
+  // OPTIONSリクエスト（プリフライト）への対応
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
@@ -20,7 +21,7 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // POSTリクエストのみ許可
+  // POSTメソッドのみ許可
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
@@ -36,7 +37,7 @@ exports.handler = async (event, context) => {
     // リクエストボディの解析
     let requestBody;
     try {
-      requestBody = JSON.parse(event.body);
+      requestBody = JSON.parse(event.body || '{}');
     } catch (parseError) {
       return {
         statusCode: 400,
@@ -48,28 +49,28 @@ exports.handler = async (event, context) => {
       };
     }
 
-    const { prompt, domain } = requestBody;
+    // messageフィールド（Wix用）とpromptフィールド（従来用）の両方に対応
+    const userMessage = requestBody.message || requestBody.prompt;
     
-    // 基本的なバリデーション
-    if (!prompt || typeof prompt !== 'string') {
+    if (!userMessage || typeof userMessage !== 'string') {
       return {
         statusCode: 400,
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'Missing or invalid prompt'
+          error: 'メッセージが入力されていません'
         })
       };
     }
 
-    // プロンプトの長さ制限
-    if (prompt.length > 2000) {
+    // メッセージの長さ制限
+    if (userMessage.length > 2000) {
       return {
         statusCode: 400,
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'Prompt too long (max 2000 characters)'
+          error: 'メッセージが長すぎます（最大2000文字）'
         })
       };
     }
@@ -84,14 +85,14 @@ exports.handler = async (event, context) => {
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'Server configuration error'
+          error: 'サーバー設定エラー'
         })
       };
     }
 
-    // ✅ 修正: 最新のGemini APIエンドポイントとモデルを使用
-    console.log('Calling Gemini API with prompt length:', prompt.length);
+    console.log('Calling Gemini API with message length:', userMessage.length);
     
+    // fetch関数は現在のNode.jsで標準で利用可能（Node.js 18+）
     const geminiResponse = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
@@ -102,7 +103,7 @@ exports.handler = async (event, context) => {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: prompt
+              text: userMessage
             }]
           }],
           generationConfig: {
@@ -141,15 +142,14 @@ exports.handler = async (event, context) => {
       
       let errorMessage = `Gemini API error: ${geminiResponse.status}`;
       
-      // より詳細なエラーメッセージを提供
       if (geminiResponse.status === 400) {
-        errorMessage = 'Invalid request format or parameters';
+        errorMessage = 'リクエスト形式が無効です';
       } else if (geminiResponse.status === 403) {
-        errorMessage = 'API key is invalid or has insufficient permissions';
+        errorMessage = 'APIキーが無効または権限不足です';
       } else if (geminiResponse.status === 404) {
-        errorMessage = 'API endpoint not found - model may not exist';
+        errorMessage = 'APIエンドポイントが見つかりません';
       } else if (geminiResponse.status === 429) {
-        errorMessage = 'Rate limit exceeded - please wait and try again';
+        errorMessage = 'レート制限に達しました。しばらく待ってから再試行してください';
       }
       
       return {
@@ -174,12 +174,11 @@ exports.handler = async (event, context) => {
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'No response generated - content may have been blocked'
+          error: 'レスポンスが生成されませんでした - コンテンツがブロックされた可能性があります'
         })
       };
     }
 
-    // 安全性チェック
     const candidate = data.candidates[0];
     if (candidate.finishReason && candidate.finishReason !== 'STOP') {
       console.warn('Content was blocked or truncated:', candidate.finishReason);
@@ -191,19 +190,21 @@ exports.handler = async (event, context) => {
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'Generated content is empty or blocked'
+          error: '生成されたコンテンツが空またはブロックされました'
         })
       };
     }
 
     const generatedText = candidate.content.parts[0].text;
 
+    // Wix用のレスポンス形式（responseフィールド）と従来形式（textフィールド）の両方に対応
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
         success: true,
-        text: generatedText,
+        response: generatedText,  // Wix用
+        text: generatedText,      // 従来用
         timestamp: new Date().toISOString(),
         finishReason: candidate.finishReason || 'STOP'
       })
@@ -212,12 +213,11 @@ exports.handler = async (event, context) => {
   } catch (error) {
     console.error('Function error:', error);
     
-    // ネットワークエラーの詳細判定
-    let errorMessage = 'Internal server error';
+    let errorMessage = 'サーバー内部エラー';
     if (error.code === 'ENOTFOUND' || error.code === 'ECONNRESET') {
-      errorMessage = 'Network connectivity error';
+      errorMessage = 'ネットワーク接続エラー';
     } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      errorMessage = 'Failed to connect to Gemini API';
+      errorMessage = 'Gemini APIへの接続に失敗しました';
     }
     
     return {
@@ -227,80 +227,6 @@ exports.handler = async (event, context) => {
         success: false,
         error: errorMessage,
         debug: error.message
-      })
-    };
-  }
-};
-// netlify/functions/gemini.js
-
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-exports.handler = async (event, context) => {
-  // CORS設定（Wix対応）
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Content-Type': 'application/json'
-  };
-
-  // OPTIONSリクエスト（プリフライト）への対応
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers,
-      body: ''
-    };
-  }
-
-  // POSTメソッドのみ許可
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      headers,
-      body: JSON.stringify({ error: 'Method not allowed' })
-    };
-  }
-
-  try {
-    // リクエストボディの解析
-    const { message } = JSON.parse(event.body || '{}');
-    
-    if (!message) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: 'メッセージが入力されていません' })
-      };
-    }
-
-    // Gemini API初期化
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
-    // Gemini APIに送信
-    const result = await model.generateContent(message);
-    const response = await result.response;
-    const text = response.text();
-
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        response: text,
-        timestamp: new Date().toISOString()
-      })
-    };
-
-  } catch (error) {
-    console.error('Gemini API Error:', error);
-    
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({
-        error: 'APIエラーが発生しました',
-        details: error.message
       })
     };
   }
