@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Netlify Functions テストページ</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .status {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            white-space: pre-wrap;
+            min-height: 100px;
+        }
+        .function-url {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Netlify Functions 動作テスト</h1>
+        
+        <div class="status success">
+            ✅ このページが表示されているということは、基本的なデプロイは成功しています！
+        </div>
+        
+        <div class="status info">
+            📍 現在のURL: <span id="currentUrl"></span>
+        </div>
+        
+        <h2>Function エンドポイント</h2>
+        <div class="function-url" id="functionUrl"></div>
+        
+        <h2>Function テスト</h2>
+        <button id="testButton">🧪 Gemini Function をテスト</button>
+        <button id="simpleTestButton">📡 シンプル接続テスト</button>
+        
+        <h2>結果</h2>
+        <div id="result">ここに結果が表示されます...</div>
+    </div>
+
+    <script>
+        // 現在のURLを表示
+        document.getElementById('currentUrl').textContent = window.location.href;
+        
+        // Function URLを構築
+        const functionUrl = window.location.origin + '/.netlify/functions/gemini';
+        document.getElementById('functionUrl').textContent = functionUrl;
+        
+        // テストボタンのイベントリスナー
+        document.getElementById('testButton').addEventListener('click', async () => {
+            const resultDiv = document.getElementById('result');
+            const testButton = document.getElementById('testButton');
+            
+            testButton.disabled = true;
+            testButton.textContent = '🔄 テスト実行中...';
+            resultDiv.textContent = 'Gemini Function をテスト中...\n';
+            
+            try {
+                const response = await fetch(functionUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        prompt: 'この接続テストが成功したら「接続テスト成功！」と答えてください。',
+                        domain: window.location.hostname
+                    })
+                });
+                
+                resultDiv.textContent += `\n📊 レスポンス状況:\n`;
+                resultDiv.textContent += `- Status: ${response.status} ${response.statusText}\n`;
+                resultDiv.textContent += `- URL: ${functionUrl}\n\n`;
+                
+                const responseText = await response.text();
+                
+                if (response.ok) {
+                    const data = JSON.parse(responseText);
+                    if (data.success) {
+                        resultDiv.textContent += `✅ 成功！\n\nAI回答:\n${data.text}`;
+                    } else {
+                        resultDiv.textContent += `❌ Function エラー:\n${data.error}`;
+                    }
+                } else {
+                    resultDiv.textContent += `❌ HTTP エラー:\n${responseText}`;
+                }
+                
+            } catch (error) {
+                resultDiv.textContent += `❌ ネットワークエラー:\n${error.message}\n\n`;
+                resultDiv.textContent += `🔍 考えられる原因:\n`;
+                resultDiv.textContent += `- Function が正しくデプロイされていない\n`;
+                resultDiv.textContent += `- 環境変数が設定されていない\n`;
+                resultDiv.textContent += `- CORSの設定問題\n`;
+            }
+            
+            testButton.disabled = false;
+            testButton.textContent = '🧪 Gemini Function をテスト';
+        });
+        
+        // シンプル接続テスト
+        document.getElementById('simpleTestButton').addEventListener('click', async () => {
+            const resultDiv = document.getElementById('result');
+            const button = document.getElementById('simpleTestButton');
+            
+            button.disabled = true;
+            button.textContent = '🔄 接続中...';
+            resultDiv.textContent = 'シンプル接続テストを実行中...\n';
+            
+            try {
+                // OPTIONSリクエストでCORSをテスト
+                const optionsResponse = await fetch(functionUrl, {
+                    method: 'OPTIONS',
+                });
+                
+                resultDiv.textContent += `📡 CORS テスト:\n`;
+                resultDiv.textContent += `- OPTIONS Status: ${optionsResponse.status}\n`;
+                
+                // 空のPOSTリクエストでFunction存在確認
+                const postResponse = await fetch(functionUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({})
+                });
+                
+                resultDiv.textContent += `- POST Status: ${postResponse.status}\n`;
+                
+                if (postResponse.status === 400) {
+                    resultDiv.textContent += `\n✅ Function は存在しています！\n（400エラーは正常 - プロンプトが空なため）`;
+                } else if (postResponse.status === 404) {
+                    resultDiv.textContent += `\n❌ Function が見つかりません\n`;
+                    resultDiv.textContent += `🔧 修復方法:\n`;
+                    resultDiv.textContent += `1. netlify/functions/gemini.js ファイルが存在するか確認\n`;
+                    resultDiv.textContent += `2. netlify.toml の設定を確認\n`;
+                    resultDiv.textContent += `3. 再デプロイを実行`;
+                } else {
+                    const responseText = await postResponse.text();
+                    resultDiv.textContent += `\n📄 レスポンス内容:\n${responseText}`;
+                }
+                
+            } catch (error) {
+                resultDiv.textContent += `❌ 接続エラー: ${error.message}`;
+            }
+            
+            button.disabled = false;
+            button.textContent = '📡 シンプル接続テスト';
+        });
+    </script>
+</body>
+</html>
