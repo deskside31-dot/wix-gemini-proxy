@@ -74,13 +74,6 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // ドメイン制限（オプション）
-    const allowedDomains = [
-      'your-site.wixsite.com',
-      'your-custom-domain.com',
-      'localhost' // テスト用
-    ];
-    
     // 環境変数からAPIキーを取得
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     
@@ -96,11 +89,11 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // Gemini API呼び出し
+    // ✅ 修正: 最新のGemini APIエンドポイントとモデルを使用
     console.log('Calling Gemini API with prompt length:', prompt.length);
     
     const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: {
@@ -126,42 +119,84 @@ exports.handler = async (event, context) => {
             {
               category: 'HARM_CATEGORY_HATE_SPEECH',
               threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+            },
+            {
+              category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+              threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+            },
+            {
+              category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+              threshold: 'BLOCK_MEDIUM_AND_ABOVE'
             }
           ]
         })
       }
     );
 
+    console.log('Gemini API response status:', geminiResponse.status);
+    
     if (!geminiResponse.ok) {
       const errorText = await geminiResponse.text();
       console.error('Gemini API error:', geminiResponse.status, errorText);
+      
+      let errorMessage = `Gemini API error: ${geminiResponse.status}`;
+      
+      // より詳細なエラーメッセージを提供
+      if (geminiResponse.status === 400) {
+        errorMessage = 'Invalid request format or parameters';
+      } else if (geminiResponse.status === 403) {
+        errorMessage = 'API key is invalid or has insufficient permissions';
+      } else if (geminiResponse.status === 404) {
+        errorMessage = 'API endpoint not found - model may not exist';
+      } else if (geminiResponse.status === 429) {
+        errorMessage = 'Rate limit exceeded - please wait and try again';
+      }
       
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           success: false,
-          error: `Gemini API error: ${geminiResponse.status}`
+          error: errorMessage,
+          details: errorText
         })
       };
     }
 
     const data = await geminiResponse.json();
-    console.log('Gemini API response received');
+    console.log('Gemini API response received successfully');
 
     // レスポンス構造の確認
     if (!data.candidates || data.candidates.length === 0) {
+      console.error('No candidates in response:', data);
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'No response generated'
+          error: 'No response generated - content may have been blocked'
         })
       };
     }
 
-    const generatedText = data.candidates[0].content.parts[0].text;
+    // 安全性チェック
+    const candidate = data.candidates[0];
+    if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+      console.warn('Content was blocked or truncated:', candidate.finishReason);
+    }
+
+    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'Generated content is empty or blocked'
+        })
+      };
+    }
+
+    const generatedText = candidate.content.parts[0].text;
 
     return {
       statusCode: 200,
@@ -169,19 +204,29 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         success: true,
         text: generatedText,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        finishReason: candidate.finishReason || 'STOP'
       })
     };
 
   } catch (error) {
     console.error('Function error:', error);
     
+    // ネットワークエラーの詳細判定
+    let errorMessage = 'Internal server error';
+    if (error.code === 'ENOTFOUND' || error.code === 'ECONNRESET') {
+      errorMessage = 'Network connectivity error';
+    } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      errorMessage = 'Failed to connect to Gemini API';
+    }
+    
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({
         success: false,
-        error: 'Internal server error'
+        error: errorMessage,
+        debug: error.message
       })
     };
   }
