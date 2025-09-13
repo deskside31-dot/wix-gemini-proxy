@@ -231,3 +231,77 @@ exports.handler = async (event, context) => {
     };
   }
 };
+// netlify/functions/gemini.js
+
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+exports.handler = async (event, context) => {
+  // CORS設定（Wix対応）
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Content-Type': 'application/json'
+  };
+
+  // OPTIONSリクエスト（プリフライト）への対応
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers,
+      body: ''
+    };
+  }
+
+  // POSTメソッドのみ許可
+  if (event.httpMethod !== 'POST') {
+    return {
+      statusCode: 405,
+      headers,
+      body: JSON.stringify({ error: 'Method not allowed' })
+    };
+  }
+
+  try {
+    // リクエストボディの解析
+    const { message } = JSON.parse(event.body || '{}');
+    
+    if (!message) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'メッセージが入力されていません' })
+      };
+    }
+
+    // Gemini API初期化
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    // Gemini APIに送信
+    const result = await model.generateContent(message);
+    const response = await result.response;
+    const text = response.text();
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        response: text,
+        timestamp: new Date().toISOString()
+      })
+    };
+
+  } catch (error) {
+    console.error('Gemini API Error:', error);
+    
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({
+        error: 'APIエラーが発生しました',
+        details: error.message
+      })
+    };
+  }
+};
