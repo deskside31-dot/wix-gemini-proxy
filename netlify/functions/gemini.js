@@ -1,19 +1,24 @@
 // netlify/functions/gemini.js
-// Gemini 2.5 Flash 対応版
+// CORS完全対応版
 
 exports.handler = async (event, context) => {
-  console.log('🚀 Gemini API function called');
+  console.log('🚀 Gemini Function called');
+  console.log('📍 Origin:', event.headers.origin);
+  console.log('🔧 Method:', event.httpMethod);
   
-  // CORS設定（Wix対応）
+  // CORS設定（完全版）
   const headers = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Content-Type': 'application/json'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Accept',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Max-Age': '86400',
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache'
   };
 
   // OPTIONSリクエスト（プリフライト）への対応
   if (event.httpMethod === 'OPTIONS') {
+    console.log('✅ OPTIONS request - returning CORS headers');
     return {
       statusCode: 200,
       headers,
@@ -23,6 +28,7 @@ exports.handler = async (event, context) => {
 
   // POSTメソッドのみ許可
   if (event.httpMethod !== 'POST') {
+    console.log('❌ Method not allowed:', event.httpMethod);
     return {
       statusCode: 405,
       headers,
@@ -38,6 +44,7 @@ exports.handler = async (event, context) => {
     let requestBody;
     try {
       requestBody = JSON.parse(event.body || '{}');
+      console.log('📦 Request body parsed, message length:', requestBody.message?.length || 0);
     } catch (parseError) {
       console.error('❌ JSON Parse Error:', parseError);
       return {
@@ -53,6 +60,7 @@ exports.handler = async (event, context) => {
     const userMessage = requestBody.message || requestBody.prompt;
     
     if (!userMessage || typeof userMessage !== 'string') {
+      console.log('❌ No message provided');
       return {
         statusCode: 400,
         headers,
@@ -63,37 +71,36 @@ exports.handler = async (event, context) => {
       };
     }
 
-    if (userMessage.length > 2000) {
+    if (userMessage.length > 5000) {
+      console.log('❌ Message too long:', userMessage.length);
       return {
         statusCode: 400,
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'メッセージが長すぎます（最大2000文字）'
+          error: 'メッセージが長すぎます（最大5000文字）'
         })
       };
     }
 
+    // 環境変数からAPIキーを取得
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     
     if (!GEMINI_API_KEY) {
-      console.error('❌ GEMINI_API_KEY environment variable not set');
+      console.error('❌ GEMINI_API_KEY not set');
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'サーバー設定エラー: APIキーが設定されていません'
+          error: 'サーバー設定エラー'
         })
       };
     }
 
-    console.log('📤 Calling Gemini API with message length:', userMessage.length);
+    console.log('📤 Calling Gemini API...');
     
-    // ✅ 修正: Gemini 2.5 Flash を使用（最新の高性能モデル）
     const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    
-    console.log('🌐 Using Gemini 2.5 Flash model');
     
     const geminiResponse = await fetch(GEMINI_ENDPOINT, {
       method: 'POST',
@@ -107,7 +114,7 @@ exports.handler = async (event, context) => {
           }]
         }],
         generationConfig: {
-          maxOutputTokens: 5000,
+          maxOutputTokens: 8192,
           temperature: 0.7,
           topP: 0.8,
           topK: 40
@@ -139,24 +146,16 @@ exports.handler = async (event, context) => {
       const errorText = await geminiResponse.text();
       console.error('❌ Gemini API error:', geminiResponse.status, errorText);
       
-      let errorMessage = 'Gemini APIエラーが発生しました';
-      let troubleshootingTip = '';
+      let errorMessage = 'Gemini APIエラー';
       
       if (geminiResponse.status === 400) {
         errorMessage = 'リクエスト形式が無効です';
-        troubleshootingTip = 'リクエストの形式を確認してください';
-      } else if (geminiResponse.status === 401) {
-        errorMessage = 'APIキーが無効です';
-        troubleshootingTip = 'Google AI StudioでAPIキーを確認してください';
-      } else if (geminiResponse.status === 403) {
-        errorMessage = 'APIアクセスが拒否されました';
-        troubleshootingTip = 'APIキーの権限またはクォータを確認してください';
+      } else if (geminiResponse.status === 401 || geminiResponse.status === 403) {
+        errorMessage = 'APIキーが無効または権限不足です';
       } else if (geminiResponse.status === 404) {
         errorMessage = 'Gemini 2.5 Flashモデルにアクセスできません';
-        troubleshootingTip = 'モデルが利用可能か、APIキーに適切な権限があるか確認してください';
       } else if (geminiResponse.status === 429) {
         errorMessage = 'レート制限に達しました';
-        troubleshootingTip = 'しばらく待ってから再試行してください';
       }
       
       return {
@@ -165,7 +164,6 @@ exports.handler = async (event, context) => {
         body: JSON.stringify({
           success: false,
           error: errorMessage,
-          troubleshooting: troubleshootingTip,
           details: errorText,
           httpStatus: geminiResponse.status
         })
@@ -173,51 +171,41 @@ exports.handler = async (event, context) => {
     }
 
     const data = await geminiResponse.json();
-    console.log('✅ Gemini 2.5 Flash response received successfully');
+    console.log('✅ Gemini response received');
 
     if (!data.candidates || data.candidates.length === 0) {
-      console.error('❌ No candidates in response:', data);
+      console.error('❌ No candidates in response');
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'レスポンスが生成されませんでした - コンテンツがセーフティフィルターによってブロックされた可能性があります'
+          error: 'レスポンスが生成されませんでした'
         })
       };
     }
 
     const candidate = data.candidates[0];
     
-    // セーフティフィルターやその他の理由でブロックされた場合のチェック
     if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-      console.warn('⚠️ Content was filtered or truncated:', candidate.finishReason);
-      let warningMessage = '';
-      
-      if (candidate.finishReason === 'SAFETY') {
-        warningMessage = ' (セーフティフィルターによってブロックされました)';
-      } else if (candidate.finishReason === 'MAX_TOKENS') {
-        warningMessage = ' (最大トークン数に達しました)';
-      }
-      
-      console.warn('⚠️ Finish reason:', candidate.finishReason + warningMessage);
+      console.warn('⚠️ Content filtered:', candidate.finishReason);
     }
     
     if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+      console.error('❌ Empty content');
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           success: false,
-          error: '生成されたコンテンツが空またはブロックされました',
+          error: '生成されたコンテンツが空です',
           finishReason: candidate.finishReason
         })
       };
     }
 
     const generatedText = candidate.content.parts[0].text;
-
-    console.log('📋 Generated response length:', generatedText.length);
+    console.log('📋 Response length:', generatedText.length);
 
     return {
       statusCode: 200,
@@ -236,14 +224,11 @@ exports.handler = async (event, context) => {
     console.error('💥 Function error:', error);
     
     let errorMessage = 'サーバー内部エラー';
-    let troubleshootingTip = '';
     
     if (error.code === 'ENOTFOUND' || error.code === 'ECONNRESET') {
       errorMessage = 'ネットワーク接続エラー';
-      troubleshootingTip = 'インターネット接続を確認してください';
     } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      errorMessage = 'Gemini APIへの接続に失敗しました';
-      troubleshootingTip = 'APIエンドポイントとネットワーク接続を確認してください';
+      errorMessage = 'Gemini APIへの接続に失敗';
     }
     
     return {
@@ -252,7 +237,6 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         success: false,
         error: errorMessage,
-        troubleshooting: troubleshootingTip,
         debug: error.message
       })
     };
