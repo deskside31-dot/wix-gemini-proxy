@@ -1,10 +1,13 @@
 // netlify/functions/gemini.js
+// =====================================================
+// Gemini 2.5 Flash ストリーミング対応API（CORS対応版）
+// =====================================================
 import fetch from "node-fetch";
 
 export const handler = async (event) => {
-  const ALLOWED_ORIGIN = "https://deskside31.wixsite.com";
+  const ALLOWED_ORIGIN = "https://deskside31.wixsite.com"; // ← あなたのWixサイトURL
 
-  // ✅ Preflight (CORS)
+  // ✅ CORS Preflight（OPTIONSリクエスト対応）
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 200,
@@ -17,6 +20,7 @@ export const handler = async (event) => {
     };
   }
 
+  // ✅ POSTのみ許可
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -26,6 +30,7 @@ export const handler = async (event) => {
   }
 
   try {
+    // ✅ リクエスト内容の取得
     const { message } = JSON.parse(event.body || "{}");
     if (!message) {
       return {
@@ -35,12 +40,22 @@ export const handler = async (event) => {
       };
     }
 
+    // ✅ Gemini APIキー確認
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      return {
+        statusCode: 500,
+        headers: { "Access-Control-Allow-Origin": ALLOWED_ORIGIN },
+        body: JSON.stringify({ success: false, error: "Missing GEMINI_API_KEY" }),
+      };
+    }
+
+    // ✅ Gemini 2.5 Flash ストリーミングAPI エンドポイント
     const GEMINI_URL =
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=" +
       GEMINI_API_KEY;
 
-    // ✅ Node.js ResponseStreamをそのまま転送
+    // ✅ Gemini API呼び出し（SSEで受信）
     const geminiResponse = await fetch(GEMINI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -50,6 +65,7 @@ export const handler = async (event) => {
           maxOutputTokens: 8192,
           temperature: 0.7,
           topP: 0.8,
+          topK: 40,
         },
       }),
     });
@@ -59,7 +75,7 @@ export const handler = async (event) => {
       throw new Error(`Gemini API error ${geminiResponse.status}: ${text}`);
     }
 
-    // ✅ ストリームをそのまま返す
+    // ✅ ストリームをそのまま返す（SSE転送）
     return new Response(geminiResponse.body, {
       status: 200,
       headers: {
@@ -70,7 +86,7 @@ export const handler = async (event) => {
       },
     });
   } catch (error) {
-    console.error("💥 Streaming error:", error);
+    console.error("💥 Gemini Function Error:", error);
     return {
       statusCode: 500,
       headers: {
