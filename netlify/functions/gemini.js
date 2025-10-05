@@ -1,10 +1,10 @@
 // netlify/functions/gemini.js
-import fetch from "node-fetch";
+// ✅ Gemini 2.5 Flash Function (CORS対応 / Netlify安定版)
 
 export const handler = async (event) => {
   const ALLOWED_ORIGIN = "https://deskside31.wixsite.com";
 
-  // ✅ Preflight (CORS) 対応
+  // ✅ CORS: Preflight（OPTIONS）対応
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 200,
@@ -21,57 +21,76 @@ export const handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
-      headers: {
-        "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-      },
+      headers: { "Access-Control-Allow-Origin": ALLOWED_ORIGIN },
       body: JSON.stringify({ success: false, error: "Method Not Allowed" }),
     };
   }
 
   try {
-    // ✅ リクエストデータ解析
+    // ✅ リクエストボディ解析
     const { message } = JSON.parse(event.body || "{}");
-    if (!message) {
+    if (!message || typeof message !== "string" || message.trim() === "") {
       return {
         statusCode: 400,
-        headers: {
-          "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-        },
-        body: JSON.stringify({ success: false, error: "Missing message" }),
+        headers: { "Access-Control-Allow-Origin": ALLOWED_ORIGIN },
+        body: JSON.stringify({ success: false, error: "メッセージが空です。" }),
       };
     }
 
-    // ✅ Gemini APIエンドポイント
-    const GEMINI_URL =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" +
-      process.env.GEMINI_API_KEY;
+    // ✅ 環境変数からAPIキー取得
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      throw new Error("環境変数 GEMINI_API_KEY が設定されていません。");
+    }
 
-    // ✅ タイムアウト付きFetch
+    // ✅ Gemini 2.5 Flash エンドポイント
+    const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    console.log("🚀 Gemini API 呼び出し開始");
+    console.log("💬 入力メッセージ:", message);
+
+    // ✅ タイムアウト付き Fetch（60秒）
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // 60秒
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
     const response = await fetch(GEMINI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: message }] }],
+        generationConfig: {
+          maxOutputTokens: 8192,
+          temperature: 0.7,
+          topP: 0.9,
+        },
+        safetySettings: [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+        ],
       }),
       signal: controller.signal,
     });
+
     clearTimeout(timeout);
 
-    // ✅ APIレスポンス解析
+    // ✅ エラーハンドリング
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Gemini API HTTP ${response.status}: ${text}`);
+      const errText = await response.text();
+      console.error("❌ Gemini API Error:", response.status, errText);
+      throw new Error(`Gemini API HTTP ${response.status}: ${errText}`);
     }
 
+    // ✅ レスポンス解析
     const data = await response.json();
+    console.log("✅ Gemini API 正常応答");
 
-    // Geminiの応答テキスト抽出
-    const geminiText =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "回答が見つかりませんでした。";
+    const text =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
+      "Geminiからの返答が取得できませんでした。";
 
-    // ✅ 正常応答
+    // ✅ 正常応答返却
     return {
       statusCode: 200,
       headers: {
@@ -80,13 +99,12 @@ export const handler = async (event) => {
       },
       body: JSON.stringify({
         success: true,
-        response: geminiText,
+        model: "gemini-2.5-flash",
+        response: text,
       }),
     };
   } catch (error) {
-    console.error("Gemini Function Error:", error);
-
-    // ✅ エラー応答
+    console.error("💥 Gemini Function Error:", error);
     return {
       statusCode: 500,
       headers: {
@@ -95,7 +113,10 @@ export const handler = async (event) => {
       },
       body: JSON.stringify({
         success: false,
-        error: error.name === "AbortError" ? "タイムアウトしました。" : error.message,
+        error:
+          error.name === "AbortError"
+            ? "Gemini API リクエストがタイムアウトしました。"
+            : error.message,
       }),
     };
   }
